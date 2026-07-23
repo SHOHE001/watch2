@@ -117,10 +117,21 @@ class SessionTailer:
         if path == self._path:
             return
         self._path = path
-        self._offset = 0
         self._carry = b""
         self._assistant_text.clear()
         self._pending_ids.clear()
+        # 切替時も必ず末尾から読む。オフセット 0 から読むと、同一 cwd に
+        # 複数の JSONL がある環境で「最新」が入れ替わるたびにファイル全文が
+        # Discord へ再生される（実際に fork 元ファイルの更新を引き金に
+        # セッション全文が流れる事故が起きた）。
+        if path is None:
+            self._offset = 0
+            return
+        try:
+            self._offset = path.stat().st_size
+        except OSError:
+            self._path = None
+            self._offset = 0
 
     async def poll_once(self) -> None:
         """現在のファイルから追加された完全行を一度だけ処理する。"""

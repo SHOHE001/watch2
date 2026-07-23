@@ -245,4 +245,12 @@ async def test_initial_end_and_file_switch(tmp_path: Path) -> None:
     selected = second
     tailer._refresh_file()
     await tailer.poll_once()
-    assert await queue.get() == AssistantTurn("new")
+    # 切替前から second にあった内容は再生しない（全文再生事故の防止）
+    assert queue.empty()
+
+    append_rows(
+        second,
+        assistant([{"type": "text", "text": "after-switch"}], "end_turn"),
+    )
+    await tailer.poll_once()
+    assert await queue.get() == AssistantTurn("after-switch")
