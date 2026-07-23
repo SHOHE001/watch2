@@ -1,0 +1,6 @@
+.env
+claude-watch.toml
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/

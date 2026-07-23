@@ -1,0 +1,16 @@
+[Unit]
+Description=watch2 Discord to tmux bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=shohei
+WorkingDirectory=/home/shohei/プロジェクト/Apple Watch２
+EnvironmentFile=/home/shohei/プロジェクト/Apple Watch２/.env
+ExecStart=/home/shohei/プロジェクト/Apple Watch２/.venv/bin/python -m watch2
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
