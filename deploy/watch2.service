@@ -1,16 +1,30 @@
 [Unit]
-Description=watch2 Discord to tmux bridge
+Description=watch2 (Discord ↔ tmux 対話セッション中継 bot)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=shohei
+Group=shohei
+# パスにスペースを含むため、単語分割される ExecStart のみ引用符が必須。
+# WorkingDirectory / EnvironmentFile は行全体が1つの値なので引用符不要。
 WorkingDirectory=/home/shohei/プロジェクト/Apple Watch２
 EnvironmentFile=/home/shohei/プロジェクト/Apple Watch２/.env
-ExecStart=/home/shohei/プロジェクト/Apple Watch２/.venv/bin/python -m watch2
+Environment=PATH=/home/shohei/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart="/home/shohei/プロジェクト/Apple Watch２/.venv/bin/python" -m watch2
 Restart=on-failure
 RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=watch2
+
+# セキュリティ強化
+NoNewPrivileges=true
+ProtectSystem=full
+# PrivateTmp は設定しないこと。tmux のサーバーソケットは /tmp/tmux-<uid>/ に
+# あり、隠すと list-panes / send-keys / capture-pane がすべて失敗する
+# （v1 claude-watch は PrivateTmp=true でこれを踏んでいた）。
 
 [Install]
 WantedBy=multi-user.target
