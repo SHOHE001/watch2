@@ -159,6 +159,19 @@ unit を自作・修正する場合の**重要な注意**（どちらも実際�
 - **`PrivateTmp=true` を設定しないこと。** tmux のサーバーソケットは `/tmp/tmux-<uid>/` にあるため、PrivateTmp を有効にすると list-panes / send-keys / capture-pane が全滅します
 - パスにスペースを含む場合、`ExecStart` は単語分割されるので実行ファイルパスを `"..."` で囲むこと（`WorkingDirectory` / `EnvironmentFile` は行全体が1つの値なので引用符不要）
 
+### 7. 接続先セッションの付け替え
+
+対象の pane を変えたいとき（別プロジェクトの作業に移ったとき等）は、ヘルパーで1コマンドです：
+
+```bash
+.venv/bin/python scripts/retarget.py <tmux_target>
+# 例: .venv/bin/python scripts/retarget.py main:0.0
+```
+
+pane の作業ディレクトリを自動検出して `claude-watch.toml` を書き換え、systemd の watch2 を再起動します。対応表に複数エントリがある場合は `--channel <channel_id>` で書き換え対象を指定してください（`--no-restart` で書き換えのみも可能）。
+
+なお、**同じ作業ディレクトリで複数の Claude Code セッションが動いていると応答ミラーが混線する**可能性があります（セッション JSONL を「cwd の最新ファイル」で特定するため）。接続先の cwd では対象セッションだけを動かすのが確実です。
+
 ## 使い方
 
 ### 通常のプロンプト
