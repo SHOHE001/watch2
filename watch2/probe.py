@@ -28,6 +28,7 @@ ProbeEvent = DialogDetected | DialogGone | ProbeError
 _DIALOG_MARKER = re.compile(r"^\s*❯ \d+\. ", re.MULTILINE)
 _EXCERPT_LINES_BEFORE_MARKER = 8
 _EXCERPT_MAX_LINES = 25
+_RULE_LINE = re.compile(r"^\s*─{5,}\s*$")
 
 
 def _dialog_excerpt(screen: str) -> str:
@@ -42,6 +43,12 @@ def _dialog_excerpt(screen: str) -> str:
     for index, line in enumerate(nonempty_lines):
         if _DIALOG_MARKER.match(line):
             start = max(0, index - _EXCERPT_LINES_BEFORE_MARKER)
+            # ダイアログ枠の罫線がさかのぼり範囲内にあれば、その直後
+            # から始める（前のターンの残骸を含めないため）
+            for back in range(index - 1, start - 1, -1):
+                if _RULE_LINE.match(nonempty_lines[back]):
+                    start = back + 1
+                    break
             break
     return "\n".join(nonempty_lines[start:][:_EXCERPT_MAX_LINES])
 
