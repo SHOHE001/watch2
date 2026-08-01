@@ -7,7 +7,6 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import json
 from pathlib import Path
-import time
 from typing import Any
 
 from .session_io import latest_session_jsonl
@@ -54,7 +53,15 @@ LatestSessionFinder = Callable[[str | Path], Path | None]
 
 
 class SessionTailer:
-    """1 プロジェクトの最新 JSONL を追跡してイベントを発行する。"""
+    """1 プロジェクトの JSONL を追跡してイベントを発行する。
+
+    追跡先は一度決めたら切り替えない。以前は「cwd 配下で mtime が最新の
+    JSONL」を定期的に選び直していたが、これは追跡先が黙って別セッションへ
+    移る事故を生んだ。実際に (1) 同じ cwd で新しい Claude を起動する、
+    (2) cron の tmux-gc が古い detached セッションを kill してその JSONL の
+    mtime が更新される、の 2 経路で発生し、Discord には無関係な会話が
+    流れていた。付け替えは retarget.py から明示的に行う。
+    """
 
     def __init__(
         self,
@@ -62,13 +69,13 @@ class SessionTailer:
         queue: asyncio.Queue[TailEvent],
         *,
         poll_interval: float = 1.0,
-        refresh_interval: float = 5.0,
+        session_file: Path | None = None,
         latest_finder: LatestSessionFinder = latest_session_jsonl,
     ) -> None:
         self.cwd = Path(cwd)
         self.queue = queue
         self.poll_interval = poll_interval
-        self.refresh_interval = refresh_interval
+        self.session_file = session_file
         self.latest_finder = latest_finder
         self._path: Path | None = None
         self._offset = 0
@@ -86,13 +93,8 @@ class SessionTailer:
     async def run(self) -> None:
         """停止要求まで JSONL をポーリングする。"""
 
-        self._select_initial_file()
-        next_refresh = time.monotonic() + self.refresh_interval
+        self._resolve_file()
         while not self._stopped.is_set():
-            now = time.monotonic()
-            if now >= next_refresh:
-                self._refresh_file()
-                next_refresh = now + self.refresh_interval
             await self.poll_once()
             try:
                 await asyncio.wait_for(
@@ -101,43 +103,39 @@ class SessionTailer:
             except TimeoutError:
                 pass
 
-    def _select_initial_file(self) -> None:
-        path = self.latest_finder(self.cwd)
-        self._path = path
+    def _resolve_file(self) -> None:
+        """追跡先を決める。決定済みなら何もしない。
+
+        設定に session_file があればそれだけを見る（まだ存在しなければ
+        未決定のままにして、生成されるまで poll ごとに再試行する）。
+        無指定のときだけ起動時点の最新 JSONL にフォールバックし、以後は
+        その 1 本に固定する。
+        """
+
+        if self._path is not None:
+            return
+        if self.session_file is not None:
+            path = self.session_file if self.session_file.exists() else None
+        else:
+            path = self.latest_finder(self.cwd)
         if path is None:
             return
+        # 常に末尾から読む。オフセット 0 から読むと、起動時や再起動時に
+        # 既存ファイルの全文が Discord へ再生される。
         try:
             self._offset = path.stat().st_size
         except OSError:
-            self._path = None
-            self._offset = 0
-
-    def _refresh_file(self) -> None:
-        path = self.latest_finder(self.cwd)
-        if path == self._path:
             return
         self._path = path
         self._carry = b""
         self._assistant_text.clear()
         self._pending_ids.clear()
-        # 切替時も必ず末尾から読む。オフセット 0 から読むと、同一 cwd に
-        # 複数の JSONL がある環境で「最新」が入れ替わるたびにファイル全文が
-        # Discord へ再生される（実際に fork 元ファイルの更新を引き金に
-        # セッション全文が流れる事故が起きた）。
-        if path is None:
-            self._offset = 0
-            return
-        try:
-            self._offset = path.stat().st_size
-        except OSError:
-            self._path = None
-            self._offset = 0
 
     async def poll_once(self) -> None:
         """現在のファイルから追加された完全行を一度だけ処理する。"""
 
         if self._path is None:
-            self._refresh_file()
+            self._resolve_file()
             return
         try:
             with self._path.open("rb") as file:

@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 import tomllib
 
+from .session_io import project_dir_for_cwd
+
 
 @dataclass(frozen=True, slots=True)
 class ProjectConfig:
@@ -15,6 +17,7 @@ class ProjectConfig:
 
     tmux_target: str
     cwd: Path
+    session_file: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +32,31 @@ def _required_nonempty_string(project: dict[str, Any], key: str, index: int) -> 
     if not isinstance(value, str) or not value:
         raise ValueError(f"projects[{index}].{key} must be a non-empty string")
     return value
+
+
+def _session_file(
+    project: dict[str, Any], index: int, cwd: Path
+) -> Path | None:
+    """追跡する JSONL を解決する。未設定なら None（起動時の最新に委ねる）。
+
+    ファイル名や session id だけの指定も受け付け、cwd に対応する
+    project directory 配下として解決する。
+    """
+
+    value = project.get("session_file")
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise ValueError(
+            f"projects[{index}].session_file must be a non-empty string"
+        )
+    path = Path(value)
+    if not path.is_absolute():
+        name = path.name
+        if not name.endswith(".jsonl"):
+            name = f"{name}.jsonl"
+        path = project_dir_for_cwd(cwd) / name
+    return path
 
 
 def load_config(path: str | Path = "claude-watch.toml") -> AppConfig:
@@ -62,7 +90,11 @@ def load_config(path: str | Path = "claude-watch.toml") -> AppConfig:
         if not cwd.is_absolute():
             raise ValueError(f"projects[{index}].cwd must be an absolute path")
 
-        projects[channel_id] = ProjectConfig(tmux_target=tmux_target, cwd=cwd)
+        projects[channel_id] = ProjectConfig(
+            tmux_target=tmux_target,
+            cwd=cwd,
+            session_file=_session_file(project, index, cwd),
+        )
 
     return AppConfig(projects=projects)
 

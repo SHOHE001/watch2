@@ -4,6 +4,7 @@
 使い方（リポジトリ root で実行）:
 
     .venv/bin/python scripts/retarget.py <tmux_target> [--channel CHANNEL_ID]
+                                         [--session-file UUID|パス]
 
 例:
 
@@ -12,6 +13,12 @@
 <tmux_target> の pane から作業ディレクトリを自動検出し、
 claude-watch.toml の該当エントリを書き換えて systemd の watch2 を再起動する。
 --channel は対応表に複数エントリがあるときだけ必須（1件ならそれを書き換える）。
+
+ミラー元の JSONL もここで固定して toml に書く。watch2 は実行中に追跡先を
+切り替えないので、対象セッションで /clear した場合や別セッションに移りたい
+場合は再度このスクリプトを実行する。--session-file は付け替え先セッションの
+id が分かっているとき（Claude 自身が自分の id を知っている場合など）に使う。
+省略時は cwd 配下で mtime が最新の JSONL を選ぶ。
 """
 
 from __future__ import annotations
@@ -21,6 +28,8 @@ from pathlib import Path
 import subprocess
 import sys
 import tomllib
+
+from watch2.session_io import latest_session_jsonl, project_dir_for_cwd
 
 CONFIG_PATH = Path("claude-watch.toml")
 
@@ -55,6 +64,32 @@ def pane_cwd(target: str) -> str:
     sys.exit(f"エラー: pane index {wanted} が {target} に見つかりません")
 
 
+def resolve_session_file(cwd: str, explicit: str | None) -> str | None:
+    """固定する JSONL を決める。見つからなければ None。
+
+    explicit は絶対パス・ファイル名・session id のいずれでもよい。
+    """
+
+    project_dir = project_dir_for_cwd(cwd)
+    if explicit is not None:
+        path = Path(explicit)
+        if not path.is_absolute():
+            name = path.name
+            if not name.endswith(".jsonl"):
+                name = f"{name}.jsonl"
+            path = project_dir / name
+        if not path.exists():
+            sys.exit(f"エラー: 指定された JSONL がありません: {path}")
+        return str(path)
+
+    latest = latest_session_jsonl(cwd)
+    if latest is None:
+        print(f"警告: {project_dir} に JSONL がありません。")
+        print("      session_file は書かず、watch2 起動時の最新に委ねます。")
+        return None
+    return str(latest)
+
+
 def emit_toml(projects: list[dict]) -> str:
     lines = [
         "# claude-watch.toml — Discord channel ↔ 対話セッション紐付け",
@@ -67,8 +102,11 @@ def emit_toml(projects: list[dict]) -> str:
             f"channel_id = {project['channel_id']}",
             f'tmux_target = "{project["tmux_target"]}"',
             f'cwd = "{project["cwd"]}"',
-            "",
         ]
+        session_file = project.get("session_file")
+        if session_file:
+            lines.append(f'session_file = "{session_file}"')
+        lines.append("")
     return "\n".join(lines)
 
 
@@ -80,6 +118,12 @@ def main() -> None:
         type=int,
         default=None,
         help="書き換える channel_id（対応表が1件のときは省略可）",
+    )
+    parser.add_argument(
+        "--session-file",
+        default=None,
+        help="固定する JSONL（session id・ファイル名・絶対パスのいずれか）。"
+        "省略時は cwd 配下の mtime 最新",
     )
     parser.add_argument(
         "--no-restart",
@@ -107,12 +151,19 @@ def main() -> None:
         entry = matches[0]
 
     cwd = pane_cwd(args.tmux_target)
+    session_file = resolve_session_file(cwd, args.session_file)
     before = f'{entry["tmux_target"]} ({entry["cwd"]})'
     entry["tmux_target"] = args.tmux_target
     entry["cwd"] = cwd
+    if session_file is None:
+        entry.pop("session_file", None)
+    else:
+        entry["session_file"] = session_file
     CONFIG_PATH.write_text(emit_toml(projects), encoding="utf-8")
     print(f"付け替え: {before}")
     print(f"      → {args.tmux_target} ({cwd})  [channel {entry['channel_id']}]")
+    if session_file is not None:
+        print(f"  ミラー元: {Path(session_file).name}（以後この 1 本に固定）")
 
     if args.no_restart:
         print("--no-restart 指定のため再起動していません（反映には再起動が必要）")

@@ -220,37 +220,83 @@ async def test_incomplete_line_carry(tmp_path: Path) -> None:
     assert await queue.get() == AssistantTurn("complete")
 
 
-async def test_initial_end_and_file_switch(tmp_path: Path) -> None:
-    first = tmp_path / "first.jsonl"
-    second = tmp_path / "second.jsonl"
-    append_rows(
-        first,
-        assistant([{"type": "text", "text": "old"}], "end_turn"),
-    )
-    append_rows(
-        second,
-        assistant([{"type": "text", "text": "new"}], "end_turn"),
-    )
-    selected = first
-
-    def finder(_cwd: str | Path) -> Path:
-        return selected
+async def test_starts_at_end_of_file(tmp_path: Path) -> None:
+    path = tmp_path / "session.jsonl"
+    append_rows(path, assistant([{"type": "text", "text": "old"}], "end_turn"))
 
     queue: asyncio.Queue[Any] = asyncio.Queue()
-    tailer = SessionTailer(tmp_path, queue, latest_finder=finder)
-    tailer._select_initial_file()
+    tailer = SessionTailer(tmp_path, queue, latest_finder=lambda _cwd: path)
+    tailer._resolve_file()
     await tailer.poll_once()
+    # 起動前からあった内容は再生しない（全文再生事故の防止）
     assert queue.empty()
+
+    append_rows(path, assistant([{"type": "text", "text": "新"}], "end_turn"))
+    await tailer.poll_once()
+    assert await queue.get() == AssistantTurn("新")
+
+
+async def test_does_not_follow_newer_file(tmp_path: Path) -> None:
+    """追跡先を決めた後は、より新しい JSONL が現れても乗り換えない。
+
+    同じ cwd で新セッションを起動する / cron が古いセッションを kill して
+    mtime が動く、のどちらでもミラー元が黙って移らないことを保証する。
+    """
+
+    first = tmp_path / "first.jsonl"
+    second = tmp_path / "second.jsonl"
+    first.touch()
+    second.touch()
+    selected = first
+
+    queue: asyncio.Queue[Any] = asyncio.Queue()
+    tailer = SessionTailer(tmp_path, queue, latest_finder=lambda _cwd: selected)
+    tailer._resolve_file()
 
     selected = second
-    tailer._refresh_file()
+    append_rows(second, assistant([{"type": "text", "text": "他"}], "end_turn"))
     await tailer.poll_once()
-    # 切替前から second にあった内容は再生しない（全文再生事故の防止）
     assert queue.empty()
 
-    append_rows(
-        second,
-        assistant([{"type": "text", "text": "after-switch"}], "end_turn"),
-    )
+    append_rows(first, assistant([{"type": "text", "text": "本命"}], "end_turn"))
     await tailer.poll_once()
-    assert await queue.get() == AssistantTurn("after-switch")
+    assert await queue.get() == AssistantTurn("本命")
+
+
+async def test_session_file_pins_target(tmp_path: Path) -> None:
+    pinned = tmp_path / "pinned.jsonl"
+    newest = tmp_path / "newest.jsonl"
+    pinned.touch()
+
+    queue: asyncio.Queue[Any] = asyncio.Queue()
+    tailer = SessionTailer(
+        tmp_path,
+        queue,
+        session_file=pinned,
+        latest_finder=lambda _cwd: newest,
+    )
+    tailer._resolve_file()
+    assert tailer._path == pinned
+
+    append_rows(newest, assistant([{"type": "text", "text": "他"}], "end_turn"))
+    append_rows(pinned, assistant([{"type": "text", "text": "本命"}], "end_turn"))
+    await tailer.poll_once()
+    assert await queue.get() == AssistantTurn("本命")
+    assert queue.empty()
+
+
+async def test_session_file_waits_until_created(tmp_path: Path) -> None:
+    pinned = tmp_path / "later.jsonl"
+    queue: asyncio.Queue[Any] = asyncio.Queue()
+    tailer = SessionTailer(tmp_path, queue, session_file=pinned)
+
+    tailer._resolve_file()
+    assert tailer._path is None
+    await tailer.poll_once()
+    assert queue.empty()
+
+    append_rows(pinned, assistant([{"type": "text", "text": "済"}], "end_turn"))
+    await tailer.poll_once()  # ここで掴む（末尾からなので既存分は流さない）
+    append_rows(pinned, assistant([{"type": "text", "text": "後"}], "end_turn"))
+    await tailer.poll_once()
+    assert await queue.get() == AssistantTurn("後")

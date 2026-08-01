@@ -98,7 +98,9 @@ class WatchClient(discord.Client):
         self._workers_started = True
         for channel_id, project in self.projects.items():
             queue: asyncio.Queue[BotEvent] = asyncio.Queue()
-            tailer = SessionTailer(project.cwd, queue)
+            tailer = SessionTailer(
+                project.cwd, queue, session_file=project.session_file
+            )
             probe = DialogProbe(
                 self.runner, project.tmux_target, queue
             )
