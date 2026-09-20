@@ -1,0 +1,83 @@
+name: Blocker
+description: 3回の意味ある試行が失敗した未解決問題を記録する。
+body:
+- type: markdown
+  attributes:
+    value: 秘密情報・token・個人情報を貼らないでください。既存Issueを先に検索してください。
+- type: textarea
+  id: field-1
+  attributes:
+    label: Goal
+  validations:
+    required: true
+- type: textarea
+  id: field-2
+  attributes:
+    label: Current blocker
+  validations:
+    required: true
+- type: textarea
+  id: field-3
+  attributes:
+    label: Attempt 1
+    description: Hypothesis / Change or verification / Result を記載してください。
+  validations:
+    required: true
+- type: textarea
+  id: field-4
+  attributes:
+    label: Attempt 2
+    description: Hypothesis / Change or verification / Result を記載してください。
+  validations:
+    required: true
+- type: textarea
+  id: field-5
+  attributes:
+    label: Attempt 3
+    description: Hypothesis / Change or verification / Result を記載してください。
+  validations:
+    required: true
+- type: textarea
+  id: field-6
+  attributes:
+    label: Error / logs
+  validations:
+    required: false
+- type: textarea
+  id: field-7
+  attributes:
+    label: Relevant files
+  validations:
+    required: true
+- type: textarea
+  id: field-8
+  attributes:
+    label: Branch
+  validations:
+    required: true
+- type: textarea
+  id: field-9
+  attributes:
+    label: Commit SHA
+  validations:
+    required: true
+- type: textarea
+  id: field-10
+  attributes:
+    label: Environment
+  validations:
+    required: true
+- type: textarea
+  id: field-11
+  attributes:
+    label: Reproduction
+  validations:
+    required: true
+- type: textarea
+  id: field-12
+  attributes:
+    label: Possible next steps
+  validations:
+    required: false
+labels:
+- blocked

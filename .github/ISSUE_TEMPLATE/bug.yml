@@ -1,0 +1,48 @@
+name: Bug report
+description: 不具合と再現手順を記録する。
+body:
+- type: markdown
+  attributes:
+    value: 秘密情報・token・個人情報を貼らないでください。既存Issueを先に検索してください。
+- type: textarea
+  id: field-1
+  attributes:
+    label: Summary
+  validations:
+    required: true
+- type: textarea
+  id: field-2
+  attributes:
+    label: Expected behavior
+  validations:
+    required: true
+- type: textarea
+  id: field-3
+  attributes:
+    label: Actual behavior
+  validations:
+    required: true
+- type: textarea
+  id: field-4
+  attributes:
+    label: Reproduction steps
+  validations:
+    required: true
+- type: textarea
+  id: field-5
+  attributes:
+    label: Environment
+  validations:
+    required: true
+- type: textarea
+  id: field-6
+  attributes:
+    label: Logs
+  validations:
+    required: false
+- type: textarea
+  id: field-7
+  attributes:
+    label: Additional context
+  validations:
+    required: false
