@@ -1,3 +1,4 @@
+import asyncio
 from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,6 +23,7 @@ def make_client() -> tuple[WatchClient, MagicMock]:
         10: ProjectConfig("work:0.0", Path("/srv/work"))
     }
     client.runner = AsyncMock()
+    client._input_locks = {}
     client.states = {10: NORMAL_STATE}
     client.recent_sent = {10: deque(maxlen=5)}
     channel = MagicMock()
@@ -158,3 +160,94 @@ async def test_chunking_and_warning_format() -> None:
     channel.send.reset_mock()
     await client.handle_event(10, ProbeError("pane\nmissing"))
     assert channel.send.await_args.args[0] == "⚠️ pane missing"
+
+
+def input_message(channel_id, text):
+    return SimpleNamespace(
+        author=SimpleNamespace(bot=False), channel=SimpleNamespace(id=channel_id),
+        content=text, reply=AsyncMock(), add_reaction=AsyncMock(),
+    )
+
+
+async def test_concurrent_prompts_keep_literal_and_enter_together() -> None:
+    client, _ = make_client()
+    client._validate_session = AsyncMock()
+    calls = []
+
+    async def runner(argv):
+        calls.append(argv)
+        await asyncio.sleep(0)
+        return 0, '', ''
+
+    client.runner = runner
+    await asyncio.gather(client.on_message(input_message(10, 'first')),
+                         client.on_message(input_message(10, 'second')))
+    assert [call[-1] for call in calls] == ['first', 'Enter', 'second', 'Enter']
+
+
+async def test_channels_sharing_a_target_share_the_same_send_order() -> None:
+    client, _ = make_client()
+    client.projects[20] = client.projects[10]
+    client.states[20] = NORMAL_STATE
+    client.recent_sent[20] = deque(maxlen=5)
+    client._validate_session = AsyncMock()
+    calls = []
+
+    async def runner(argv):
+        calls.append(argv[-1])
+        await asyncio.sleep(0)
+        return 0, '', ''
+
+    client.runner = runner
+    await asyncio.gather(client.on_message(input_message(10, 'first')),
+                         client.on_message(input_message(20, 'second')))
+    assert calls == ['first', 'Enter', 'second', 'Enter']
+
+
+async def test_failed_send_releases_the_target_for_the_next_message() -> None:
+    client, _ = make_client()
+    client._validate_session = AsyncMock()
+    calls = []
+
+    async def runner(argv):
+        calls.append(argv[-1])
+        await asyncio.sleep(0)
+        return (1, '', 'fixture failure') if argv[-1] == 'first' else (0, '', '')
+
+    client.runner = runner
+    first = input_message(10, 'first')
+    second = input_message(10, 'second')
+    await asyncio.gather(client.on_message(first), client.on_message(second))
+    assert calls == ['first', 'second', 'Enter']
+    first.reply.assert_awaited_once()
+    first.add_reaction.assert_not_awaited()
+    second.add_reaction.assert_awaited_once_with('✅')
+
+
+async def test_different_targets_can_progress_independently() -> None:
+    client, _ = make_client()
+    client.projects[20] = ProjectConfig('other:0.0', Path('/srv/other'))
+    client.states[20] = NORMAL_STATE
+    client.recent_sent[20] = deque(maxlen=5)
+    client._validate_session = AsyncMock()
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    calls = []
+
+    async def runner(argv):
+        calls.append(argv[-1])
+        if argv[-1] == 'first':
+            first_started.set()
+            await release_first.wait()
+        return 0, '', ''
+
+    client.runner = runner
+    first = asyncio.create_task(client.on_message(input_message(10, 'first')))
+    try:
+        await asyncio.wait_for(first_started.wait(), 1)
+        await asyncio.wait_for(client.on_message(input_message(20, 'second')), 1)
+        assert calls == ['first', 'second', 'Enter']
+    finally:
+        release_first.set()
+        await first
+    assert calls == ['first', 'second', 'Enter', 'Enter']

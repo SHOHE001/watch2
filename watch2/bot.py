@@ -91,6 +91,7 @@ class WatchClient(discord.Client):
         self._tailers: list[SessionTailer] = []
         self._probes: list[DialogProbe] = []
         self._workers_started = False
+        self._input_locks: dict[str, asyncio.Lock] = {}
 
     async def on_ready(self) -> None:
         if self._workers_started:
@@ -155,6 +156,16 @@ class WatchClient(discord.Client):
         text = message.content.strip()
         if not text:
             return
+        target = self.projects[channel_id].tmux_target
+        lock = self._input_locks.setdefault(target, asyncio.Lock())
+        async with lock:
+            await self._deliver_message(message, channel_id, text)
+
+    async def _deliver_message(
+        self, message: discord.Message, channel_id: int, text: str
+    ) -> None:
+        # Discord dispatches handlers concurrently. Keep validation and the
+        # literal-text/Enter pair together for one configured pane target.
         if text == "!reset":
             self.states[channel_id] = NORMAL_STATE
             await message.reply("✅ 承認待ち状態を解除しました")
